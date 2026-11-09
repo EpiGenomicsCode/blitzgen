@@ -1,3 +1,88 @@
+# BlitzGen
+
+**A protein design pipeline assembled from distilled and optimized model
+components.**
+
+A design run is a stack of stages — design, inverse folding, folding, analysis,
+filtering — and each stage is a model that can be swapped for a cheaper one
+without rebuilding the pipeline around it. BlitzGen is that pipeline plus the
+component set, and the swapping is the point: the folding stage currently runs
+a 16-step distilled student in place of a 200-step teacher.
+
+## Components
+
+| stage | default | also available |
+|---|---|---|
+| design | BoltzGen | — |
+| inverse folding | BoltzGen | — |
+| folding — trunk | Boltz-2 | PairMixer *(under investigation, see [ROADMAP.md](./ROADMAP.md))* |
+| folding — sampler | **Blitz K16** (16 steps, deterministic) | Blitz K8, Boltz-2 teacher (200 steps) |
+| analysis, filtering | BoltzGen | — |
+
+Rolling the folding stage back to stock Boltz-2 is two flags:
+`--folding_checkpoint` → `folding-boltz2` with `--folding_config fold.yaml`.
+
+## Naming
+
+Component names carry provenance; the project name does not. Artifact keys are
+role-first, with the implementation as a qualifier, and checkpoints are
+`<framework>-<base>-<variant>`:
+
+```
+folding             -> blitz-boltz2-k16.ckpt                        the default
+folding-blitz-k8    -> boltz2_mscd_armC_step2000_raw_S1.5exp.ckpt   rollback
+folding-boltz2      -> boltz2_conf_final.ckpt                       the teacher
+```
+
+So replacing the trunk adds `trunk-pairmixer` beside `trunk-boltz2`; it does not
+rename anything. A project named after its current components would have to be.
+(The K8 export predates the convention and keeps its original filename; the
+*key* is what callers use, which is why keys are the thing kept regular.)
+
+**Blitz** is the lab's distillation framework
+([EpiGenomicsCode/Blitz](https://github.com/EpiGenomicsCode/Blitz)); *Blitz K16*
+is what it produced from Boltz-2. **BlitzGen** is the design pipeline, not any
+one distillation of it — components may come from Blitz or from anywhere else.
+
+> ⚠️ **Blitz and Boltz differ by one letter.** `blitzgen` and `boltzgen` are
+> different distributions that both provide an importable `boltzgen` package and
+> a `boltzgen` command. Do not install both into one environment.
+
+## Install
+
+Python >= 3.11. Pick the extra matching your CUDA major version — it carries
+the `cuequivariance_ops_*` wheels, which are CUDA-major-specific:
+
+```bash
+pip install "blitzgen[cu12] @ git+https://github.com/EpiGenomicsCode/blitzgen@v0.1.0"
+```
+
+Install from a tag, not a branch. BlitzGen is 0.x and the defaults move.
+
+The folding checkpoint is ~2 GB and is not shipped with the package. Point
+`$BLITZGEN_FOLDING_CKPT` at it, or leave it in an `artifacts/` directory at or
+above your working directory.
+
+Upstream's own installation notes, including the conda walkthrough, are further
+down in this file and still apply once the `pip install` line is swapped.
+
+## Documentation
+
+* **[README_BLITZ_FOLDING.md](./README_BLITZ_FOLDING.md)** — the folding stage in detail
+* **[FORK.md](./FORK.md)** — exactly what differs from upstream BoltzGen, and how to rebase
+* **[ROADMAP.md](./ROADMAP.md)** — current status; **this is 0.x, not 1.0**
+
+## Provenance
+
+BlitzGen is a fork of [BoltzGen](https://github.com/HannesStark/boltzgen), based
+on commit `a3149cf` (upstream 0.3.2). The design, inverse-folding, analysis and
+filtering stages are upstream's, unmodified. The fork is small on purpose — 12
+files changed, 4 added — so that it can be rebased as upstream moves;
+[FORK.md](./FORK.md) has the delta and the command.
+
+**Everything below this line is upstream BoltzGen's README, kept as-is.**
+
+---
 
 <div align="center">
   <div>&nbsp;</div>
@@ -8,9 +93,6 @@
 [Video](https://www.youtube.com/watch?v=9d_QWUUI1Qo) <br> <br>
  ![alt text](assets/cover.png)
 </div>
-
-> **EpiGenomicsCode fork:** folding / structure prediction defaults to the **MSCD student** checkpoint (8-step, exp-exact).  
-> Setup: **[README_MSCD_STUDENT.md](./README_MSCD_STUDENT.md)**. Upstream Boltz-2 folding remains available via `--folding_checkpoint` → `folding-boltz2`.
 
 # Installation
 In an environment with python >=3.11:

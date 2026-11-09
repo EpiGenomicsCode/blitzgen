@@ -120,7 +120,7 @@ assert all(
 # Folding default = Arm C MSCD student (raw step=2000, winning S1.5_exp recipe).
 # Teacher Boltz-2 conf kept as folding-boltz2 for rollback.
 # Default folding weights: Blitz K16 (EpiGenomicsCode/Blitz). Overridable with
-# BOLTZGEN_FOLDING_CKPT so the path is not baked to one machine -- the previous
+# BLITZGEN_FOLDING_CKPT so the path is not baked to one machine -- the previous
 # default was an absolute Delta scratch path that did not exist anywhere else,
 # and pointed at the K8 export by its old MSCD name.
 #

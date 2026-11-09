@@ -87,8 +87,8 @@ scheduled 0.634 -> 0.040 with a terminal override to 0.135 below 3/32.
 ## 1. Install
 
 ```bash
-git clone git@github.com:EpiGenomicsCode/boltzgen.git
-cd boltzgen
+git clone git@github.com:EpiGenomicsCode/blitzgen.git
+cd blitzgen
 
 conda create -n bg python=3.12 -y
 conda activate bg
@@ -195,7 +195,7 @@ boltzgen run ... \
 
 ```bash
 # unit tests (exp_exact algebra + wiring)
-cd boltzgen
+cd blitzgen
 PYTHONPATH=src python -m pytest tests/test_exp_exact_step.py -v
 ```
 

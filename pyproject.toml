@@ -7,9 +7,16 @@ build-backend = "setuptools.build_meta"
 # build-backend = "setuptools.build_meta"
 
 [project]
-name = "boltzgen"
+# Distribution name is "blitzgen"; the import package stays "boltzgen".
+# Keeping the import name means every upstream config, doc and example works
+# unchanged and the fork delta stays small -- but the distribution must not be
+# called "boltzgen", because this is not upstream and must not shadow it.
+name = "blitzgen"
 requires-python = ">=3.11"
-version = "1.0.0"
+# 0.x on purpose. This is NOT BlitzGen 1.0: the folding arm is settled but the
+# trunk is under active investigation (see ROADMAP.md -- PairMixer). No API
+# stability is promised between 0.x releases.
+version = "0.1.0"
 readme = { file = "PYPI_DESCRIPTION.md", content-type = "text/markdown" }
 description = "Protein design"
 dependencies = [
@@ -34,10 +41,14 @@ dependencies = [
     "einops",
     "mashumaro",
     "nvidia-ml-py>=12.535.133",
-    "cuequivariance_ops_cu13>=0.5.0",
-    "cuequivariance_ops_torch_cu13>=0.5.0",
-#    "cuequivariance_ops_cu12>=0.5.0",
-#    "cuequivariance_ops_torch_cu12>=0.5.0",
+    # cuequivariance_torch is required: it is on the critical path via
+    # model/layers/triangular.py, which reaches its triton triangle kernels.
+    # The compiled cuequivariance_ops_* wheels are CUDA-major-version specific
+    # and are NOT required -- libcue_ops.so is never actually loaded in this
+    # pipeline; the triton path is what runs. They are therefore extras, so
+    # that a hard cu13 pin cannot make the package uninstallable on the CUDA 12
+    # hosts this is meant to run on (Colab, Kaggle, the OSPool cu129 image).
+    #   pip install blitzgen[cu12]   or   pip install blitzgen[cu13]
     "cuequivariance_torch>=0.5.0",
     "huggingface_hub",
     "biopython", 
@@ -57,9 +68,21 @@ where = ["src"]
 boltzgen = ["resources/config/**/*"]
 
 [project.scripts]
+# Both names run the same entry point. "boltzgen" is kept so upstream docs,
+# scripts and container recipes keep working; "blitzgen" is the name this
+# project goes by.
 boltzgen = "boltzgen.cli.boltzgen:main"
+blitzgen = "boltzgen.cli.boltzgen:main"
 
 [project.optional-dependencies]
+cu12 = [
+    "cuequivariance_ops_cu12>=0.5.0",
+    "cuequivariance_ops_torch_cu12>=0.5.0",
+]
+cu13 = [
+    "cuequivariance_ops_cu13>=0.5.0",
+    "cuequivariance_ops_torch_cu13>=0.5.0",
+]
 lint = ["ruff"]
 test = ["pytest"]
 doc = []
@@ -69,10 +92,10 @@ dev = [
     "wandb",
     "requests",
     "types-requests==2.32.4.*",
-    "boltzgen[lint]",
-    "boltzgen[test]",
-    "boltzgen[doc]",
-    "boltzgen[build]",
+    "blitzgen[lint]",
+    "blitzgen[test]",
+    "blitzgen[doc]",
+    "blitzgen[build]",
 ]
 
 [tool.ruff]
