@@ -12,7 +12,7 @@ from typing import List, Optional, Union
 
 import torch
 from omegaconf import OmegaConf, listconfig
-from pytorch_lightning import LightningModule, Trainer
+from pytorch_lightning import LightningModule, Trainer, seed_everything
 
 from pytorch_lightning.strategies import DDPStrategy
 
@@ -51,6 +51,8 @@ class Predict(Task):
         compile_pairformer: bool = False,
         compile_structure: bool = False,
         checkpoint_diffusion_conditioning: bool = False,
+        seed: Optional[int] = None,
+        deterministic: bool = False,
     ) -> None:
         """Initialize the task.
 
@@ -93,6 +95,8 @@ class Predict(Task):
         self.compile_pairformer = compile_pairformer
         self.compile_structure = compile_structure
         self.checkpoint_diffusion_conditioning = checkpoint_diffusion_conditioning
+        self.seed = seed
+        self.deterministic = deterministic
 
     def run(self, config: OmegaConf = None, run_prediction=True) -> None:  # noqa: ARG002
         # Silence warnings and pytorch lightning tips
@@ -102,6 +106,25 @@ class Predict(Task):
         if len(self.data.predict_set) == 0:
             print("No predictions required")
             return
+
+        # Seed every RNG the sampler touches. Without this, repeat runs of the
+        # same image on the same inputs differ: diffusion sampling draws fresh
+        # noise each time (measured max |ipTM| drift 0.047 across 20 designs).
+        # Provenance records are only meaningful if the run can be reproduced.
+        if self.seed is not None:
+            seed_everything(self.seed, workers=True)
+
+        # Seeding alone does NOT make the sampler reproducible: measured on 20
+        # designs, two seeded runs of identical inputs diverged by up to 31.7 A.
+        # Non-deterministic GPU kernels perturb step 1 at ~1e-7 and the diffusion
+        # trajectory amplifies that over 16 steps. Forcing deterministic kernels
+        # is the other half; it costs throughput, so it is opt-in.
+        # NB: CUBLAS_WORKSPACE_CONFIG=:4096:8 must be set in the environment
+        # before CUDA initialises, which this flag cannot do for itself.
+        if self.deterministic:
+            torch.backends.cudnn.deterministic = True
+            torch.backends.cudnn.benchmark = False
+            torch.use_deterministic_algorithms(True, warn_only=True)
 
         # Set no grad
         torch.set_grad_enabled(False)

@@ -134,6 +134,35 @@ class Boltz(LightningModule):
 
         self.use_kernels = use_kernels
 
+        # boltz2_conf hparams include use_trifast; boltzgen trunk modules reject it.
+        # Lightning may pass OmegaConf DictConfig (not isinstance(..., dict)).
+        def _strip_trifast(args):
+            if args is None:
+                return args
+            if isinstance(args, dict):
+                args.pop("use_trifast", None)
+                return args
+            try:
+                from omegaconf import OmegaConf
+
+                if OmegaConf.is_config(args):
+                    d = OmegaConf.to_container(args, resolve=True)
+                    if isinstance(d, dict):
+                        d.pop("use_trifast", None)
+                        return d
+            except Exception:
+                pass
+            if hasattr(args, "pop"):
+                try:
+                    args.pop("use_trifast", None)
+                except Exception:
+                    pass
+            return args
+
+        template_args = _strip_trifast(template_args)
+        msa_args = _strip_trifast(msa_args)
+        pairformer_args = _strip_trifast(pairformer_args)
+
         # No random recycling
         self.no_random_recycling_training = no_random_recycling_training
 

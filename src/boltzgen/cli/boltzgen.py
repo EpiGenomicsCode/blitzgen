@@ -117,6 +117,50 @@ assert all(
 
 
 ### Model checkpoints and other artifacts ####
+# Folding default = Arm C MSCD student (raw step=2000, winning S1.5_exp recipe).
+# Teacher Boltz-2 conf kept as folding-boltz2 for rollback.
+# Default folding weights: Blitz K16 (EpiGenomicsCode/Blitz). Overridable with
+# BOLTZGEN_FOLDING_CKPT so the path is not baked to one machine -- the previous
+# default was an absolute Delta scratch path that did not exist anywhere else,
+# and pointed at the K8 export by its old MSCD name.
+#
+# K16 MUST be run with fold_blitz_k16.yaml (16 steps, sigma_min 0.01). Pairing it
+# with the k8 recipe runs 16-step weights on an 8-step schedule at the wrong
+# sigma_min: no error is raised, the structures look plausible, and the sampler
+# is simply wrong. That is why the default config below moved too.
+def _default_folding_ckpt() -> str:
+    """Locate blitz-boltz2-k16.ckpt without baking in one machine's layout.
+
+    A __file__-relative guess is wrong inside the container: the package sits at
+    /usr/local/lib/python3.11/dist-packages/boltzgen, so walking up four levels
+    lands on /usr/local/lib/artifacts. Search real candidates instead, and fall
+    back to the bare name so the error names the file rather than a bogus path.
+    """
+    env = os.environ.get("BLITZGEN_FOLDING_CKPT")
+    if env:
+        return env
+    name = "blitz-boltz2-k16.ckpt"
+    roots = [Path.cwd(), *Path.cwd().parents, Path(__file__).resolve().parents[4]]
+    for root in roots:
+        for c in (root / "artifacts" / name, root / name):
+            if c.is_file():
+                return str(c)
+    # Nothing found. There is no sane universal location for a 2 GB checkpoint,
+    # so fail loudly at use time naming the env var rather than a guessed path.
+    return (
+        f"{name} (not found; set BLITZGEN_FOLDING_CKPT to its path, "
+        f"or pass --folding_checkpoint)"
+    )
+
+
+_BLITZ_K16_FOLDING = _default_folding_ckpt()
+# Blitz K8: the same artifact this fork previously called the "MSCD Arm C
+# student". Kept addressable for rollback via --folding_checkpoint.
+_BLITZ_K8_FOLDING = os.environ.get(
+    "BLITZGEN_FOLDING_CKPT_K8",
+    "/work/nvme/bgqi/vmathew/boltz_data/boltzgen_artifacts/"
+    "boltz2_mscd_armC_step2000_raw_S1.5exp.ckpt",
+)
 ARTIFACTS: dict[str, tuple[str, str]] = {
     "design-diverse": (
         "huggingface:boltzgen/boltzgen-1:boltzgen1_diverse.ckpt",
@@ -131,6 +175,14 @@ ARTIFACTS: dict[str, tuple[str, str]] = {
         "model",
     ),
     "folding": (
+        _BLITZ_K16_FOLDING,
+        "model",
+    ),
+    "folding-blitz-k8": (
+        _BLITZ_K8_FOLDING,
+        "model",
+    ),
+    "folding-boltz2": (
         "huggingface:boltzgen/boltzgen-1:boltz2_conf_final.ckpt",
         "model",
     ),
@@ -288,6 +340,36 @@ def add_configure_arguments(
         type=str,
         help="Path to the folding checkpoint. Default: %(default)s",
         default=ARTIFACTS["folding"][0],
+    )
+    p.add_argument(
+        "--seed",
+        type=int,
+        default=42,
+        help=(
+            "RNG seed applied to every prediction step (design, inverse folding, "
+            "folding, affinity). Fixed by default so a run is reproducible from its "
+            "recorded parameters; pass -1 for nondeterministic sampling."
+        ),
+    )
+    p.add_argument(
+        "--deterministic",
+        action="store_true",
+        help=(
+            "Force deterministic GPU kernels. A seed alone does not make runs "
+            "reproducible; this is the other half, at a throughput cost. Also set "
+            "CUBLAS_WORKSPACE_CONFIG=:4096:8 in the environment."
+        ),
+    )
+    p.add_argument(
+        "--folding_config",
+        type=str,
+        default=None,
+        help=(
+            "Folding Hydra config filename under --config_dir, or absolute path. "
+            "Default: fold_blitz_k16.yaml (Blitz K16) if present, else "
+            "fold_blitz_k8.yaml (Blitz K8), else fold.yaml. "
+            "Use fold.yaml for stock Boltz-2 folding."
+        ),
     )
     p.add_argument(
         "--affinity_checkpoint",
@@ -938,6 +1020,21 @@ class BinderDesignPipeline:
             protocol_config, args.config, step_names
         )
 
+        # Propagate the seed to every prediction step so a run is reproducible
+        # from its recorded parameters. -1 means "do not seed" (nondeterministic).
+        # Only the Predict-based steps accept a seed; analysis and filtering have
+        # no such field and Hydra would reject the override.
+        _SEEDED_STEPS = {
+            "design", "inverse_folding", "folding", "design_folding", "affinity",
+        }
+        _seed = getattr(args, "seed", None)
+        if _seed is not None and _seed >= 0:
+            for _step in step_names:
+                if _step in _SEEDED_STEPS:
+                    config_args_by_step[_step].append(f"seed={_seed}")
+                    if getattr(args, "deterministic", False):
+                        config_args_by_step[_step].append("deterministic=true")
+
         devices = (
             args.devices if args.devices is not None else torch.cuda.device_count()
         )
@@ -1103,12 +1200,28 @@ class BinderDesignPipeline:
                     )
                 )
 
+        # Folding / design_folding config: MSCD student by default; stock via --folding_config fold.yaml
+        if getattr(args, "folding_config", None):
+            fold_cfg = Path(args.folding_config)
+            if not fold_cfg.is_file():
+                fold_cfg = args.config_dir / args.folding_config
+        else:
+            # Order matters: the default checkpoint is Blitz K16, so the default
+            # recipe must be the K16 one. Falling back to the k8 recipe here would
+            # silently mis-sample the default weights.
+            for _cand in ("fold_blitz_k16.yaml", "fold_blitz_k8.yaml", "fold.yaml"):
+                fold_cfg = args.config_dir / _cand
+                if fold_cfg.is_file():
+                    break
+        if not fold_cfg.is_file():
+            raise FileNotFoundError(f"Folding config not found: {fold_cfg}")
+
         # Folding
         input_dir = output_dir
         self.steps.append(
             PipelineStep(
                 name="folding",
-                config_path=args.config_dir / "fold.yaml",
+                config_path=fold_cfg,
                 args=[
                     f"output={output_dir}",
                     f"data.design_dir={input_dir}",
@@ -1131,7 +1244,7 @@ class BinderDesignPipeline:
             self.steps.append(
                 PipelineStep(
                     name="design_folding",
-                    config_path=args.config_dir / "fold.yaml",
+                    config_path=fold_cfg,
                     args=[
                         f"output={output_dir}",
                         f"data.design_dir={input_dir}",

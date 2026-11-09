@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from math import sqrt
 from math import exp
 from scipy.stats import norm
@@ -50,6 +51,22 @@ from scipy.stats import beta
 
 def optionally_tqdm(iterable, use_tqdm=True, **kwargs):
     return tqdm(iterable, **kwargs) if use_tqdm else iterable
+
+
+def exp_exact_step_enabled(module: object | None = None) -> bool:
+    """OFF-by-default gate for the closed-form S-scaled exact step.
+
+    Exact step (D held fixed over the interval):
+        x_next = D + (σ_next/σ_cur)^S · (x − D)
+    Travel fraction is ``1 − (1−r)^S ∈ (0,1)`` for every ``r < 1``, so the
+    iterate never crosses D and has no ψ-pole. Enable via
+    ``module.exp_exact_step = True`` or env ``BOLTZ_EXP_EXACT_STEP`` in
+    {1,true,yes,on}.
+    """
+    if module is not None and bool(getattr(module, "exp_exact_step", False)):
+        return True
+    env = os.environ.get("BOLTZ_EXP_EXACT_STEP", "").strip().lower()
+    return env in ("1", "true", "yes", "on")
 
 
 """
@@ -301,6 +318,7 @@ class AtomDiffusion(Module):
         time_dilation_start: float = 0.6,
         time_dilation_end: float = 0.8,
         pred_threshold: Optional[float] = None,
+        exp_exact_step: bool = False,
     ):
         super().__init__()
         self.score_model = DiffusionModule(
@@ -342,6 +360,8 @@ class AtomDiffusion(Module):
         self.step_scale_alpha = step_scale_alpha
         self.step_scale_beta = step_scale_beta
         self.step_scale_random = step_scale_random
+        # Closed-form S-scaled exact step; OFF by default (see exp_exact_step_enabled).
+        self.exp_exact_step = exp_exact_step
         self.coordinate_augmentation = coordinate_augmentation
         self.coordinate_augmentation_inference = (
             coordinate_augmentation_inference
@@ -610,10 +630,24 @@ class AtomDiffusion(Module):
                 atom_coords_noisy = atom_coords_noisy.to(atom_coords_denoised)
 
             # note here I believe there is a mistake in the AF3 paper where they use atom_coords instead of atom_coords_noisy
-            denoised_over_sigma = (atom_coords_noisy - atom_coords_denoised) / t_hat
-            atom_coords_next = (
-                atom_coords_noisy + step_scale * (sigma_t - t_hat) * denoised_over_sigma
-            )
+            # Optional closed-form S-scaled exact step (OFF by default):
+            #   x_next = D + (σ_next/σ_cur)^S · (x − D)
+            if exp_exact_step_enabled(self):
+                sigma_cur_f = float(t_hat)
+                sigma_next_f = float(sigma_t)
+                if sigma_cur_f <= 0.0:
+                    ratio = 0.0
+                else:
+                    ratio = (sigma_next_f / sigma_cur_f) ** float(step_scale)
+                atom_coords_next = atom_coords_denoised + ratio * (
+                    atom_coords_noisy - atom_coords_denoised
+                )
+            else:
+                denoised_over_sigma = (atom_coords_noisy - atom_coords_denoised) / t_hat
+                atom_coords_next = (
+                    atom_coords_noisy
+                    + step_scale * (sigma_t - t_hat) * denoised_over_sigma
+                )
 
             coords_traj.append(atom_coords_next)
             x0_coords_traj.append(atom_coords_denoised)

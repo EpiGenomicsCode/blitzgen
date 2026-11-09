@@ -43,6 +43,11 @@ name: null
 output: null
 checkpoint: null
 matmul_precision: high
+# Fixed RNG seed for the diffusion sampler. Without it, repeat runs of identical
+# inputs differ and a provenance record cannot be reproduced. Override per run
+# with --seed; set to null to restore nondeterministic sampling.
+seed: 42
+deterministic: false
 recycling_steps: 3
 sampling_steps: 500
 diffusion_samples: 1

@@ -9,6 +9,9 @@
  ![alt text](assets/cover.png)
 </div>
 
+> **EpiGenomicsCode fork:** folding / structure prediction defaults to the **MSCD student** checkpoint (8-step, exp-exact).  
+> Setup: **[README_MSCD_STUDENT.md](./README_MSCD_STUDENT.md)**. Upstream Boltz-2 folding remains available via `--folding_checkpoint` → `folding-boltz2`.
+
 # Installation
 In an environment with python >=3.11:
 ```bash
